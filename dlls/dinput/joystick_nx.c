@@ -112,6 +112,80 @@ static BOOL nx_get_xinput_state(XINPUT_STATE *state)
     return nx_load_xinput() && pXInputGetState(0, state) == ERROR_SUCCESS;
 }
 
+/*
+ * NFSU2 US 1.2 native DirectInput integration.
+ *
+ * XtendedInput documents these data addresses for the US 1.2 executable:
+ *   GAMEFLOWMANAGER_STATUS_ADDR = 0x008654A4
+ *   JOYSTICKTYPE_P1_ADDR        = 0x00864788
+ *   DEVICE_COUNT_ADDR           = 0x00870764
+ *
+ * We do not replace the game's input scanner here. We only make the synthetic
+ * DirectInput pad look like a normal PC joystick to the game's own controller
+ * code and add the common "left stick also navigates menus" behaviour.
+ */
+static DWORD nx_pov(WORD buttons);
+
+static BOOL nx_is_nfsu2(void)
+{
+    static int cached = -1;
+    WCHAR path[MAX_PATH], *name;
+
+    if (cached >= 0) return cached;
+    cached = 0;
+    if (!GetModuleFileNameW(NULL, path, ARRAY_SIZE(path))) return FALSE;
+    name = wcsrchr(path, L'\\');
+    if (!name) name = wcsrchr(path, L'/');
+    name = name ? name + 1 : path;
+    if (!wcsicmp(name, L"speed2.exe")) cached = 1;
+    return cached;
+}
+
+static BOOL nx_game_ptr_ok(const void *ptr, SIZE_T size, BOOL write)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    DWORD protect;
+
+    if (!VirtualQuery(ptr, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) return FALSE;
+    if ((const BYTE *)ptr + size > (const BYTE *)mbi.BaseAddress + mbi.RegionSize) return FALSE;
+    protect = mbi.Protect & 0xff;
+    if (protect == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD)) return FALSE;
+    if (write && protect != PAGE_READWRITE && protect != PAGE_WRITECOPY &&
+        protect != PAGE_EXECUTE_READWRITE && protect != PAGE_EXECUTE_WRITECOPY) return FALSE;
+    return TRUE;
+}
+
+static void nx_nfsu2_mark_controller(void)
+{
+    volatile DWORD *device_count = (volatile DWORD *)0x00870764;
+    volatile BYTE *joystick_type = (volatile BYTE *)0x00864788;
+
+    if (!nx_is_nfsu2()) return;
+    if (nx_game_ptr_ok((const void *)device_count, sizeof(*device_count), TRUE)) *device_count = 2;
+    if (nx_game_ptr_ok((const void *)joystick_type, sizeof(*joystick_type), TRUE)) *joystick_type = 1;
+}
+
+static BOOL nx_nfsu2_frontend(void)
+{
+    volatile DWORD *status = (volatile DWORD *)0x008654A4;
+
+    if (!nx_is_nfsu2()) return FALSE;
+    if (!nx_game_ptr_ok((const void *)status, sizeof(*status), FALSE)) return FALSE;
+    return *status == 3;
+}
+
+static DWORD nx_pov_from_left_stick(XINPUT_STATE *state)
+{
+    const SHORT threshold = 16000;
+    WORD b = 0;
+
+    if (state->Gamepad.sThumbLY > threshold) b |= XINPUT_GAMEPAD_DPAD_UP;
+    if (state->Gamepad.sThumbLY < -threshold) b |= XINPUT_GAMEPAD_DPAD_DOWN;
+    if (state->Gamepad.sThumbLX < -threshold) b |= XINPUT_GAMEPAD_DPAD_LEFT;
+    if (state->Gamepad.sThumbLX > threshold) b |= XINPUT_GAMEPAD_DPAD_RIGHT;
+    return nx_pov(b);
+}
+
 static LONG nx_axis_signed(SHORT value, BOOL invert)
 {
     const LONG deadzone = 4096;
@@ -276,11 +350,25 @@ static HRESULT nx_joystick_poll(IDirectInputDevice8W *iface)
 
     EnterCriticalSection(&impl->base.crit);
 
+    DWORD pov = nx_pov(b);
+
+    nx_nfsu2_mark_controller();
+
+    /*
+     * Vanilla NFSU2 uses the POV hat for front-end navigation even though the
+     * left stick X axis is used for analog steering. On a modern PC gamepad the
+     * expected behaviour is that the left stick also navigates menus, so only
+     * while the game is in its front-end state we mirror the left stick into
+     * the POV hat. The real D-pad always wins when it is held.
+     */
+    if (nx_nfsu2_frontend() && pov == 0xffffffff)
+        pov = nx_pov_from_left_stick(&state);
+
     nx_update_long(impl, DIJOFS_X, 0, nx_axis_to_dinput(impl, 0, state.Gamepad.sThumbLX, FALSE));
     nx_update_long(impl, DIJOFS_Y, 1, nx_axis_to_dinput(impl, 1, state.Gamepad.sThumbLY, TRUE));
     nx_update_long(impl, DIJOFS_RX, 2, nx_axis_to_dinput(impl, 2, state.Gamepad.sThumbRX, FALSE));
     nx_update_long(impl, DIJOFS_RY, 3, nx_axis_to_dinput(impl, 3, state.Gamepad.sThumbRY, TRUE));
-    nx_update_long(impl, DIJOFS_POV(0), 4, nx_pov(b));
+    nx_update_long(impl, DIJOFS_POV(0), 4, pov);
 
     nx_update_button(impl, DIJOFS_BUTTON(0), 5, b & XINPUT_GAMEPAD_A);
     nx_update_button(impl, DIJOFS_BUTTON(1), 6, b & XINPUT_GAMEPAD_B);
@@ -372,6 +460,7 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
         return DIERR_DEVICENOTREG;
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
     nx_claim_controller();
+    nx_nfsu2_mark_controller();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
