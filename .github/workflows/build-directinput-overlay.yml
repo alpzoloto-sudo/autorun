@@ -66,19 +66,19 @@ jobs:
 
           tmp="$(mktemp -d)"
           curl -L --fail --retry 3 \
-            https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz \
+            https://github.com/doitsujin/dxvk/releases/download/v3.0.2/dxvk-3.0.2.tar.gz \
             -o "$tmp/dxvk.tar.gz"
           tar -xzf "$tmp/dxvk.tar.gz" -C "$tmp"
-          mkdir -p "overlay/switch/wine/drive_c/dxvk/versions/2.7.1"
-          cp "$tmp/dxvk-2.7.1/x32/"*.dll \
-             "overlay/switch/wine/drive_c/dxvk/versions/2.7.1/"
+          mkdir -p "overlay/switch/wine/drive_c/dxvk/versions/3.0.2"
+          cp "$tmp/dxvk-3.0.2/x32/"*.dll \
+             "overlay/switch/wine/drive_c/dxvk/versions/3.0.2/"
           rm -rf "$tmp"
 
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
           # Diagnostic step 3: compare against older DXVK.
           d3d=dxvk
-          dxvk-version=2.7.1
+          dxvk-version=3.0.2
           vsync=0
           address-space=32-bit
           own-controls=0
@@ -99,7 +99,7 @@ jobs:
           and allow dinput.dll to be replaced.
 
           This test build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad and tests NFSU2 against DXVK 2.7.1.
+          as a legacy DirectInput gamepad and tests NFSU2 against DXVK 3.0.2.
 
           The external Widescreen Fix ASI and compositor runtime are intentionally
           NOT included. This overlay keeps the last known-good Wine-NX runtime.
