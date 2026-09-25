@@ -48,9 +48,11 @@ jobs:
             make -C wine-nx-probe/build-wine-wow64-pe-ci -j2 \
             include/all \
             dlls/dinput/i386-windows/dinput.dll \
-            dlls/dinput8/i386-windows/dinput8.dll
+            dlls/dinput8/i386-windows/dinput8.dll \
+            dlls/d3dx9_43/i386-windows/d3dx9_43.dll
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll
+          file wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll
 
       - name: Make SD overlay
         run: |
@@ -59,6 +61,19 @@ jobs:
              overlay/switch/wine/drive_c/windows/syswow64/dinput.dll
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll \
              overlay/switch/wine/drive_c/windows/syswow64/dinput8.dll
+          cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll \
+             overlay/switch/wine/drive_c/windows/syswow64/d3dx9_43.dll
+
+          mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
+          cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
+          d3d=dxvk
+          frame-limit=30
+          vsync=1
+          upscaling=fsr
+          upscaling-sharpness=40%
+          address-space=32-bit
+          own-controls=0
+          EOF
           cat > overlay/README.txt <<'EOF'
           Autorun DirectInput test overlay for nfsu2-directinput.
 
@@ -66,8 +81,12 @@ jobs:
           and allow dinput.dll to be replaced.
 
           This test build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad. It is intended to test NFS Underground 2
-          without NFSU-XtendedInput/ASI injection.
+          as a legacy DirectInput gamepad and adds an NFSU2 graphics profile:
+          DXVK, 30 FPS cap, VSync and FSR upscaling.
+
+          d3dx9_43.dll is also included for compatibility with the NFSU2
+          Widescreen Fix. Keep the game-local ASI loader out for the first
+          performance test; test DXVK/FSR first.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
