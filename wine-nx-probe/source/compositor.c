@@ -431,13 +431,35 @@ static void *presenter_thread( void *arg )
         }
         for (i = 0; i < count; i++)
         {
+            int src_width, src_height;
+
             layer = drawn[i];
+            src_width = layer->visible_width < layer->width ? layer->visible_width : layer->width;
+            src_height = layer->visible_height < layer->height ? layer->visible_height : layer->height;
+
             quads[i].texture = &layer->texture;
             quads[i].x = layer->x;
             quads[i].y = layer->y;
-            quads[i].width = layer->visible_width < layer->width ? layer->visible_width : layer->width;
-            quads[i].height = layer->visible_height < layer->height ? layer->visible_height : layer->height;
+            quads[i].width = src_width;
+            quads[i].height = src_height;
             quads[i].src_x = quads[i].src_y = 0;
+            quads[i].src_width = src_width;
+            quads[i].src_height = src_height;
+
+            /*
+             * NFSU2's stable Wine-NX mode is 800x600.  Do not touch the game's
+             * resolution tables or inject ASI code; simply scale that finished
+             * 4:3 surface to the Switch framebuffer.  This keeps the known-good
+             * renderer/input path intact and only changes presentation.
+             */
+            if (comp.width == 1280 && comp.height == 720 &&
+                src_width == 800 && src_height == 600)
+            {
+                quads[i].x = 0;
+                quads[i].y = 0;
+                quads[i].width = 1280;
+                quads[i].height = 720;
+            }
         }
         if (count < capacity && wine_nx_osk_frame( comp.width, comp.height, &osk ))
         {
@@ -478,6 +500,8 @@ static void *presenter_thread( void *arg )
                 quads[count].width = keyboard->width;
                 quads[count].height = keyboard->height;
                 quads[count].src_x = quads[count].src_y = 0;
+                quads[count].src_width = keyboard->width;
+                quads[count].src_height = keyboard->height;
                 drawn[count++] = keyboard;
             }
         }
