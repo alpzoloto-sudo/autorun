@@ -47,14 +47,18 @@ jobs:
           PATH="/opt/llvm-mingw/bin:$PATH" \
             make -C wine-nx-probe/build-wine-wow64-pe-ci -j2 \
             include/all \
-            dlls/dinput/i386-windows/dinput.dll
+            dlls/dinput/i386-windows/dinput.dll \
+            dlls/dinput8/i386-windows/dinput8.dll
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll
+          file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll
 
       - name: Make SD overlay
         run: |
           mkdir -p overlay/switch/wine/drive_c/windows/syswow64
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll \
              overlay/switch/wine/drive_c/windows/syswow64/dinput.dll
+          cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll \
+             overlay/switch/wine/drive_c/windows/syswow64/dinput8.dll
           cat > overlay/README.txt <<'EOF'
           Autorun DirectInput test overlay for nfsu2-directinput.
 
@@ -67,6 +71,7 @@ jobs:
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
+            switch/wine/drive_c/windows/syswow64/dinput8.dll
           EOF
           cd overlay
           zip -r ../autorun-directinput-nfsu2-test.zip .
