@@ -210,67 +210,6 @@ static void nx_nfsu2_mark_controller(void)
     if (nx_game_ptr_ok((const void *)joystick_type, sizeof(*joystick_type), TRUE)) *joystick_type = 1;
 }
 
-/*
- * NFSU2 US 1.2 has six built-in resolution slots:
- *   widths  @ 0x00800538 = 640,800,1024,1280,1280,1600
- *   heights @ 0x00800550 = 480,600,768,960,1024,1200
- *
- * Widescreen Fix replaces the game's resolution machinery, but its injected
- * code is not safe under Wine-NX's 32-bit forwarder. For Switch, a much
- * smaller patch is enough: replace the 800x600 slot with the native handheld
- * framebuffer size 1280x720 and keep g_RacingResolution on slot 1.
- *
- * Only apply when the expected vanilla values are present, so other exe
- * revisions are left untouched.
- */
-static INIT_ONCE nx_nfsu2_res_once = INIT_ONCE_STATIC_INIT;
-
-static BOOL WINAPI nx_patch_nfsu2_resolution_once(INIT_ONCE *once, void *param, void **context)
-{
-    volatile DWORD *widths = (volatile DWORD *)0x00800538;
-    volatile DWORD *heights = (volatile DWORD *)0x00800550;
-    volatile DWORD *racing_resolution = (volatile DWORD *)0x00870D1C;
-    DWORD old_w = 0, old_h = 0;
-    BOOL ok_w = FALSE, ok_h = FALSE;
-
-    if (!nx_is_nfsu2()) return TRUE;
-    if (!nx_game_ptr_ok((const void *)widths, 6 * sizeof(DWORD), FALSE) ||
-        !nx_game_ptr_ok((const void *)heights, 6 * sizeof(DWORD), FALSE))
-        return TRUE;
-
-    if (widths[1] != 800 || heights[1] != 600)
-    {
-        TRACE("NFSU2 resolution table unexpected: slot1=%lu x %lu\n", widths[1], heights[1]);
-        return TRUE;
-    }
-
-    if (VirtualProtect((void *)&widths[1], sizeof(DWORD), PAGE_READWRITE, &old_w))
-    {
-        widths[1] = 1280;
-        VirtualProtect((void *)&widths[1], sizeof(DWORD), old_w, &old_w);
-        ok_w = TRUE;
-    }
-    if (VirtualProtect((void *)&heights[1], sizeof(DWORD), PAGE_READWRITE, &old_h))
-    {
-        heights[1] = 720;
-        VirtualProtect((void *)&heights[1], sizeof(DWORD), old_h, &old_h);
-        ok_h = TRUE;
-    }
-
-    if (ok_w && ok_h)
-    {
-        if (nx_game_ptr_ok((const void *)racing_resolution, sizeof(*racing_resolution), TRUE))
-            *racing_resolution = 1;
-        TRACE("NFSU2 resolution slot 1 patched to 1280x720\n");
-    }
-    return TRUE;
-}
-
-static void nx_patch_nfsu2_resolution(void)
-{
-    InitOnceExecuteOnce(&nx_nfsu2_res_once, nx_patch_nfsu2_resolution_once, NULL, NULL);
-}
-
 static BOOL nx_nfsu2_frontend(void)
 {
     volatile DWORD *status = (volatile DWORD *)0x008654A4;
@@ -567,7 +506,6 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
     nx_claim_controller();
     nx_nfsu2_mark_controller();
-    nx_patch_nfsu2_resolution();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
