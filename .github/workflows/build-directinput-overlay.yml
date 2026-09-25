@@ -66,8 +66,10 @@ jobs:
 
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          # Diagnostic baseline: controller bridge only.
-          # Leave Direct3D on Wine's default path; no DXVK frame limiter or FSR.
+          # Diagnostic step 2: DXVK only.
+          # No frame limiter, no VSync and no FSR so we can isolate which
+          # DXVK-side option triggers the race-transition hang.
+          d3d=dxvk
           vsync=0
           address-space=32-bit
           own-controls=0
