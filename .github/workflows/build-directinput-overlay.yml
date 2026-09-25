@@ -64,21 +64,10 @@ jobs:
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll \
              overlay/switch/wine/drive_c/windows/syswow64/d3dx9_43.dll
 
-          tmp="$(mktemp -d)"
-          curl -L --fail --retry 3 \
-            https://github.com/doitsujin/dxvk/releases/download/v3.0.2/dxvk-3.0.2.tar.gz \
-            -o "$tmp/dxvk.tar.gz"
-          tar -xzf "$tmp/dxvk.tar.gz" -C "$tmp"
-          mkdir -p "overlay/switch/wine/drive_c/dxvk/versions/3.0.2"
-          cp "$tmp/dxvk-3.0.2/x32/"*.dll \
-             "overlay/switch/wine/drive_c/dxvk/versions/3.0.2/"
-          rm -rf "$tmp"
-
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          # Diagnostic step 3: compare against older DXVK.
+          # Diagnostic step 4: bundled DXVK with D3D9 dialog mode.
           d3d=dxvk
-          dxvk-version=3.0.2
           vsync=0
           address-space=32-bit
           own-controls=0
@@ -87,7 +76,10 @@ jobs:
           # Overwrite any stale per-game DXVK experiment left on the SD card.
           # Frame cap/VSync still come from speed2.wine-nx.txt via Autorun.
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
-          # NFSU2 clean baseline: intentionally no aspect-ratio override.
+          # NFSU2 repeatedly resets/recreates its D3D9 presentation path while
+          # entering garages/races. Keep DXVK out of exclusive fullscreen for
+          # this diagnostic run so that transition does not depend on device loss.
+          d3d9.enableDialogMode = True
           EOF
 
 
@@ -99,13 +91,13 @@ jobs:
           and allow dinput.dll to be replaced.
 
           This test build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad and tests NFSU2 against DXVK 3.0.2.
+          as a legacy DirectInput gamepad and tests NFSU2 against bundled DXVK.
 
           The external Widescreen Fix ASI and compositor runtime are intentionally
           NOT included. This overlay keeps the last known-good Wine-NX runtime.
 
           The DirectInput bridge remains unchanged. This build intentionally
-          has no frame cap, VSync or FSR while comparing DXVK versions.
+          has no frame cap, VSync or FSR; only D3D9 dialog mode is enabled.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
