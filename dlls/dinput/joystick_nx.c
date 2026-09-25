@@ -506,7 +506,6 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
     nx_claim_controller();
     nx_nfsu2_mark_controller();
-    nx_load_nfsu2_widescreen_fix();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
