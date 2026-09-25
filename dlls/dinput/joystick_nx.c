@@ -1,0 +1,339 @@
+/*
+ * Wine-NX synthetic DirectInput joystick
+ *
+ * Exposes Autorun's existing XInput controller as a legacy DirectInput
+ * joystick. Horizon has no HID gamepad device, so Wine's normal HID-backed
+ * DirectInput joystick cannot see the Switch controller.
+ *
+ * Copyright 2026 Wine-NX contributors
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ */
+
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "windef.h"
+#include "winbase.h"
+#include "winerror.h"
+#include "dinput.h"
+#include "xinput.h"
+
+#include "dinput_private.h"
+#include "device_private.h"
+
+#include "initguid.h"
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(dinput);
+
+/* Stable instance GUID for the synthetic Switch pad ("NXPAD-GA..." in bytes). */
+DEFINE_GUID(nx_joystick_guid, 0x4e585041, 0x442d, 0x4741, 0x8d, 0x49, 0x52, 0x55, 0x4e, 0x50, 0x41, 0x44);
+
+struct nx_joystick
+{
+    struct dinput_device base;
+};
+
+typedef DWORD (WINAPI *xinput_get_state_func)(DWORD, XINPUT_STATE *);
+
+static HMODULE xinput_module;
+static xinput_get_state_func pXInputGetState;
+static BOOL xinput_tried;
+
+static inline struct nx_joystick *impl_from_IDirectInputDevice8W(IDirectInputDevice8W *iface)
+{
+    return CONTAINING_RECORD(CONTAINING_RECORD(iface, struct dinput_device, IDirectInputDevice8W_iface),
+                             struct nx_joystick, base);
+}
+
+static BOOL nx_load_xinput(void)
+{
+    if (xinput_tried) return !!pXInputGetState;
+    xinput_tried = TRUE;
+
+    xinput_module = LoadLibraryW(L"xinput1_3.dll");
+    if (!xinput_module) xinput_module = LoadLibraryW(L"xinput1_4.dll");
+    if (xinput_module)
+        pXInputGetState = (xinput_get_state_func)GetProcAddress(xinput_module, "XInputGetState");
+
+    TRACE("Autorun DirectInput bridge: XInputGetState %s\n", pXInputGetState ? "ready" : "unavailable");
+    return !!pXInputGetState;
+}
+
+static BOOL nx_get_xinput_state(XINPUT_STATE *state)
+{
+    memset(state, 0, sizeof(*state));
+    return nx_load_xinput() && pXInputGetState(0, state) == ERROR_SUCCESS;
+}
+
+static LONG nx_axis(SHORT value, BOOL invert)
+{
+    LONG v = value;
+
+    if (invert) v = -v;
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
+    return v + 32768;
+}
+
+static DWORD nx_pov(WORD buttons)
+{
+    BOOL up = !!(buttons & XINPUT_GAMEPAD_DPAD_UP);
+    BOOL down = !!(buttons & XINPUT_GAMEPAD_DPAD_DOWN);
+    BOOL left = !!(buttons & XINPUT_GAMEPAD_DPAD_LEFT);
+    BOOL right = !!(buttons & XINPUT_GAMEPAD_DPAD_RIGHT);
+
+    if (up && right) return 4500;
+    if (right && down) return 13500;
+    if (down && left) return 22500;
+    if (left && up) return 31500;
+    if (up) return 0;
+    if (right) return 9000;
+    if (down) return 18000;
+    if (left) return 27000;
+    return 0xffffffff;
+}
+
+static BOOL try_enum_object(struct dinput_device *impl, const DIPROPHEADER *filter, DWORD flags,
+                            enum_object_callback callback, UINT index,
+                            DIDEVICEOBJECTINSTANCEW *instance, void *data)
+{
+    if (flags != DIDFT_ALL && !(flags & DIDFT_GETTYPE(instance->dwType))) return DIENUM_CONTINUE;
+
+    switch (filter->dwHow)
+    {
+    case DIPH_DEVICE:
+        return callback(impl, index, NULL, instance, data);
+    case DIPH_BYOFFSET:
+        if (filter->dwObj != instance->dwOfs) return DIENUM_CONTINUE;
+        return callback(impl, index, NULL, instance, data);
+    case DIPH_BYID:
+        if ((filter->dwObj & 0x00ffffff) != (instance->dwType & 0x00ffffff)) return DIENUM_CONTINUE;
+        return callback(impl, index, NULL, instance, data);
+    }
+
+    return DIENUM_CONTINUE;
+}
+
+static HRESULT nx_joystick_enum_objects(IDirectInputDevice8W *iface, const DIPROPHEADER *filter,
+                                        DWORD flags, enum_object_callback callback, void *context)
+{
+    struct nx_joystick *impl = impl_from_IDirectInputDevice8W(iface);
+    DIDEVICEOBJECTINSTANCEW instances[] =
+    {
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_XAxis, DIJOFS_X,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(0), DIDOI_ASPECTPOSITION, L"X Axis"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_YAxis, DIJOFS_Y,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(1), DIDOI_ASPECTPOSITION, L"Y Axis"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_ZAxis, DIJOFS_Z,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(2), DIDOI_ASPECTPOSITION, L"Left Trigger"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RxAxis, DIJOFS_RX,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(3), DIDOI_ASPECTPOSITION, L"Right X Axis"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RyAxis, DIJOFS_RY,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(4), DIDOI_ASPECTPOSITION, L"Right Y Axis"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RzAxis, DIJOFS_RZ,
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(5), DIDOI_ASPECTPOSITION, L"Right Trigger"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_POV, DIJOFS_POV(0),
+         DIDFT_POV | DIDFT_MAKEINSTANCE(0), 0, L"D-pad"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(0),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(0), 0, L"A"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(1),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(1), 0, L"B"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(2),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(2), 0, L"X"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(3),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(3), 0, L"Y"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(4),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(4), 0, L"Left Shoulder"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(5),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(5), 0, L"Right Shoulder"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(6),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(6), 0, L"Back"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(7),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(7), 0, L"Start"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(8),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(8), 0, L"Left Stick"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(9),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(9), 0, L"Right Stick"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(10),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(10), 0, L"Left Trigger"},
+        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(11),
+         DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(11), 0, L"Right Trigger"},
+    };
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(instances); ++i)
+        if (try_enum_object(&impl->base, filter, flags, callback, i, &instances[i], context) != DIENUM_CONTINUE)
+            return DIENUM_STOP;
+
+    return DIENUM_CONTINUE;
+}
+
+static void nx_update_long(struct nx_joystick *impl, DWORD offset, UINT object, LONG value)
+{
+    LONG *dst = (LONG *)(impl->base.device_state + offset);
+
+    if (*dst == value) return;
+    *dst = value;
+    queue_event(&impl->base.IDirectInputDevice8W_iface, object, value, GetCurrentTime(),
+                impl->base.dinput->evsequence++);
+}
+
+static void nx_update_button(struct nx_joystick *impl, DWORD offset, UINT object, BOOL pressed)
+{
+    BYTE value = pressed ? 0x80 : 0;
+    BYTE *dst = impl->base.device_state + offset;
+
+    if (*dst == value) return;
+    *dst = value;
+    queue_event(&impl->base.IDirectInputDevice8W_iface, object, value, GetCurrentTime(),
+                impl->base.dinput->evsequence++);
+}
+
+static HRESULT nx_joystick_poll(IDirectInputDevice8W *iface)
+{
+    struct nx_joystick *impl = impl_from_IDirectInputDevice8W(iface);
+    XINPUT_STATE state;
+    WORD b;
+
+    if (!nx_get_xinput_state(&state)) return DIERR_INPUTLOST;
+    b = state.Gamepad.wButtons;
+
+    EnterCriticalSection(&impl->base.crit);
+
+    nx_update_long(impl, DIJOFS_X, 0, nx_axis(state.Gamepad.sThumbLX, FALSE));
+    nx_update_long(impl, DIJOFS_Y, 1, nx_axis(state.Gamepad.sThumbLY, TRUE));
+    nx_update_long(impl, DIJOFS_Z, 2, (LONG)state.Gamepad.bLeftTrigger * 257);
+    nx_update_long(impl, DIJOFS_RX, 3, nx_axis(state.Gamepad.sThumbRX, FALSE));
+    nx_update_long(impl, DIJOFS_RY, 4, nx_axis(state.Gamepad.sThumbRY, TRUE));
+    nx_update_long(impl, DIJOFS_RZ, 5, (LONG)state.Gamepad.bRightTrigger * 257);
+    nx_update_long(impl, DIJOFS_POV(0), 6, nx_pov(b));
+
+    nx_update_button(impl, DIJOFS_BUTTON(0), 7, b & XINPUT_GAMEPAD_A);
+    nx_update_button(impl, DIJOFS_BUTTON(1), 8, b & XINPUT_GAMEPAD_B);
+    nx_update_button(impl, DIJOFS_BUTTON(2), 9, b & XINPUT_GAMEPAD_X);
+    nx_update_button(impl, DIJOFS_BUTTON(3), 10, b & XINPUT_GAMEPAD_Y);
+    nx_update_button(impl, DIJOFS_BUTTON(4), 11, b & XINPUT_GAMEPAD_LEFT_SHOULDER);
+    nx_update_button(impl, DIJOFS_BUTTON(5), 12, b & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+    nx_update_button(impl, DIJOFS_BUTTON(6), 13, b & XINPUT_GAMEPAD_BACK);
+    nx_update_button(impl, DIJOFS_BUTTON(7), 14, b & XINPUT_GAMEPAD_START);
+    nx_update_button(impl, DIJOFS_BUTTON(8), 15, b & XINPUT_GAMEPAD_LEFT_THUMB);
+    nx_update_button(impl, DIJOFS_BUTTON(9), 16, b & XINPUT_GAMEPAD_RIGHT_THUMB);
+    nx_update_button(impl, DIJOFS_BUTTON(10), 17, state.Gamepad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+    nx_update_button(impl, DIJOFS_BUTTON(11), 18, state.Gamepad.bRightTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+
+    if (impl->base.hEvent) SetEvent(impl->base.hEvent);
+    LeaveCriticalSection(&impl->base.crit);
+    return DI_OK;
+}
+
+static HRESULT nx_joystick_acquire(IDirectInputDevice8W *iface)
+{
+    XINPUT_STATE state;
+    return nx_get_xinput_state(&state) ? DI_OK : DIERR_INPUTLOST;
+}
+
+static HRESULT nx_joystick_unacquire(IDirectInputDevice8W *iface)
+{
+    struct nx_joystick *impl = impl_from_IDirectInputDevice8W(iface);
+
+    memset(impl->base.device_state, 0, sizeof(impl->base.device_state));
+    *(LONG *)(impl->base.device_state + DIJOFS_X) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_Y) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_RX) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_RY) = 32768;
+    *(DWORD *)(impl->base.device_state + DIJOFS_POV(0)) = 0xffffffff;
+    return DI_OK;
+}
+
+static const struct dinput_device_vtbl nx_joystick_vtbl =
+{
+    NULL,
+    nx_joystick_poll,
+    NULL,
+    nx_joystick_acquire,
+    nx_joystick_unacquire,
+    nx_joystick_enum_objects,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+};
+
+HRESULT nx_joystick_enum_device(DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance, DWORD version)
+{
+    XINPUT_STATE state;
+    DWORD size;
+
+    if (flags & DIEDFL_FORCEFEEDBACK) return DIERR_NOTFOUND;
+    if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
+
+    size = instance->dwSize;
+    memset(instance, 0, size);
+    instance->dwSize = size;
+    instance->guidInstance = nx_joystick_guid;
+    instance->guidProduct = nx_joystick_guid;
+    instance->guidFFDriver = GUID_NULL;
+    if (version >= 0x0800)
+        instance->dwDevType = DI8DEVTYPE_GAMEPAD | (DI8DEVTYPEGAMEPAD_STANDARD << 8);
+    else
+        instance->dwDevType = DIDEVTYPE_JOYSTICK | (DIDEVTYPEJOYSTICK_GAMEPAD << 8);
+    instance->wUsagePage = 0x01;
+    instance->wUsage = 0x05;
+    lstrcpynW(instance->tszInstanceName, L"Autorun Controller", MAX_PATH);
+    lstrcpynW(instance->tszProductName, L"Autorun Xbox 360 Controller (DirectInput)", MAX_PATH);
+    return DI_OK;
+}
+
+HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out)
+{
+    struct nx_joystick *impl;
+    XINPUT_STATE state;
+    HRESULT hr;
+    unsigned int i;
+
+    *out = NULL;
+    if (!IsEqualGUID(guid, &nx_joystick_guid) && !IsEqualGUID(guid, &GUID_Joystick))
+        return DIERR_DEVICENOTREG;
+    if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
+
+    if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
+    dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
+    impl->base.crit.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": nx_joystick.base.crit");
+    impl->base.dwCoopLevel = DISCL_NONEXCLUSIVE | DISCL_BACKGROUND;
+
+    nx_joystick_enum_device(0, 0, &impl->base.instance, dinput->dwVersion);
+    impl->base.caps.dwDevType = impl->base.instance.dwDevType;
+    impl->base.caps.dwFirmwareRevision = 100;
+    impl->base.caps.dwHardwareRevision = 100;
+
+    if (FAILED(hr = dinput_device_init_device_format(&impl->base.IDirectInputDevice8W_iface))) goto failed;
+
+    for (i = 0; i < 6 && i < impl->base.device_format.dwNumObjs; ++i)
+    {
+        impl->base.object_properties[i].range_min = 0;
+        impl->base.object_properties[i].range_max = 65535;
+        impl->base.object_properties[i].granularity = 1;
+    }
+
+    *(LONG *)(impl->base.device_state + DIJOFS_X) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_Y) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_RX) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_RY) = 32768;
+    *(DWORD *)(impl->base.device_state + DIJOFS_POV(0)) = 0xffffffff;
+
+    *out = &impl->base.IDirectInputDevice8W_iface;
+    TRACE("created Autorun synthetic DirectInput controller\n");
+    return DI_OK;
+
+failed:
+    IDirectInputDevice_Release(&impl->base.IDirectInputDevice8W_iface);
+    return hr;
+}
