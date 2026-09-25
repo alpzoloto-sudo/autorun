@@ -64,12 +64,21 @@ jobs:
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll \
              overlay/switch/wine/drive_c/windows/syswow64/d3dx9_43.dll
 
+          tmp="$(mktemp -d)"
+          curl -L --fail --retry 3 \
+            https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz \
+            -o "$tmp/dxvk.tar.gz"
+          tar -xzf "$tmp/dxvk.tar.gz" -C "$tmp"
+          mkdir -p "overlay/switch/wine/drive_c/dxvk/versions/2.7.1"
+          cp "$tmp/dxvk-2.7.1/x32/"*.dll \
+             "overlay/switch/wine/drive_c/dxvk/versions/2.7.1/"
+          rm -rf "$tmp"
+
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          # Diagnostic step 2: DXVK only.
-          # No frame limiter, no VSync and no FSR so we can isolate which
-          # DXVK-side option triggers the race-transition hang.
+          # Diagnostic step 3: compare against older DXVK.
           d3d=dxvk
+          dxvk-version=2.7.1
           vsync=0
           address-space=32-bit
           own-controls=0
@@ -90,14 +99,13 @@ jobs:
           and allow dinput.dll to be replaced.
 
           This test build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad and adds an NFSU2 graphics profile:
-          DXVK, 30 FPS cap, VSync and FSR upscaling.
+          as a legacy DirectInput gamepad and tests NFSU2 against DXVK 2.7.1.
 
           The external Widescreen Fix ASI and compositor runtime are intentionally
           NOT included. This overlay keeps the last known-good Wine-NX runtime.
 
-          The DirectInput profile, NFSU2 game-thread stabilization, DXVK,
-          30 FPS cap, VSync and FSR remain enabled.
+          The DirectInput bridge remains unchanged. This build intentionally
+          has no frame cap, VSync or FSR while comparing DXVK versions.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
