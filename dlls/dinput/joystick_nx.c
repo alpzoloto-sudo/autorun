@@ -112,14 +112,8 @@ static BOOL nx_get_xinput_state(XINPUT_STATE *state)
     return nx_load_xinput() && pXInputGetState(0, state) == ERROR_SUCCESS;
 }
 
-static LONG nx_axis(SHORT value, BOOL invert)
+static LONG nx_axis_signed(SHORT value, BOOL invert)
 {
-    /* Switch sticks rarely sit on an exact zero. Old DirectInput games such as
-     * NFSU2 often apply little or no deadzone, so a small hardware offset can
-     * look like a permanently held direction in both menus and gameplay.
-     *
-     * Apply a modest radial-per-axis deadzone and rescale the remaining travel
-     * back to the full DirectInput range. */
     const LONG deadzone = 4096;
     LONG v = value;
 
@@ -127,7 +121,7 @@ static LONG nx_axis(SHORT value, BOOL invert)
     if (v > 32767) v = 32767;
     if (v < -32768) v = -32768;
 
-    if (v > -deadzone && v < deadzone) return 32768;
+    if (v > -deadzone && v < deadzone) return 0;
 
     if (v > 0)
         v = (v - deadzone) * 32767 / (32767 - deadzone);
@@ -136,7 +130,29 @@ static LONG nx_axis(SHORT value, BOOL invert)
 
     if (v > 32767) v = 32767;
     if (v < -32768) v = -32768;
-    return v + 32768;
+    return v;
+}
+
+static LONG nx_axis_to_dinput(struct nx_joystick *impl, UINT object, SHORT value, BOOL invert)
+{
+    struct object_properties *properties = impl->base.object_properties + object;
+    LONG v = nx_axis_signed(value, invert);
+    LONG min = properties->range_min;
+    LONG max = properties->range_max;
+    LONG center;
+
+    /*
+     * DirectInput applications are allowed to change DIPROP_RANGE. NFSU2 does
+     * that. The first bridge always returned 0..65535, which becomes an
+     * off-centre/extreme value when the game requests a different range.
+     */
+    if (min == DIPROPRANGE_NOMIN) min = 0;
+    if (max == DIPROPRANGE_NOMAX) max = 65535;
+    center = min + (max - min) / 2;
+
+    if (!v) return center;
+    if (v > 0) return center + MulDiv(v, max - center, 32767);
+    return center + MulDiv(v, center - min, 32768);
 }
 
 static DWORD nx_pov(WORD buttons)
@@ -260,10 +276,10 @@ static HRESULT nx_joystick_poll(IDirectInputDevice8W *iface)
 
     EnterCriticalSection(&impl->base.crit);
 
-    nx_update_long(impl, DIJOFS_X, 0, nx_axis(state.Gamepad.sThumbLX, FALSE));
-    nx_update_long(impl, DIJOFS_Y, 1, nx_axis(state.Gamepad.sThumbLY, TRUE));
-    nx_update_long(impl, DIJOFS_RX, 2, nx_axis(state.Gamepad.sThumbRX, FALSE));
-    nx_update_long(impl, DIJOFS_RY, 3, nx_axis(state.Gamepad.sThumbRY, TRUE));
+    nx_update_long(impl, DIJOFS_X, 0, nx_axis_to_dinput(impl, 0, state.Gamepad.sThumbLX, FALSE));
+    nx_update_long(impl, DIJOFS_Y, 1, nx_axis_to_dinput(impl, 1, state.Gamepad.sThumbLY, TRUE));
+    nx_update_long(impl, DIJOFS_RX, 2, nx_axis_to_dinput(impl, 2, state.Gamepad.sThumbRX, FALSE));
+    nx_update_long(impl, DIJOFS_RY, 3, nx_axis_to_dinput(impl, 3, state.Gamepad.sThumbRY, TRUE));
     nx_update_long(impl, DIJOFS_POV(0), 4, nx_pov(b));
 
     nx_update_button(impl, DIJOFS_BUTTON(0), 5, b & XINPUT_GAMEPAD_A);
@@ -295,10 +311,10 @@ static HRESULT nx_joystick_unacquire(IDirectInputDevice8W *iface)
     struct nx_joystick *impl = impl_from_IDirectInputDevice8W(iface);
 
     memset(impl->base.device_state, 0, sizeof(impl->base.device_state));
-    *(LONG *)(impl->base.device_state + DIJOFS_X) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_Y) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_RX) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_RY) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_X) = nx_axis_to_dinput(impl, 0, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_Y) = nx_axis_to_dinput(impl, 1, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_RX) = nx_axis_to_dinput(impl, 2, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_RY) = nx_axis_to_dinput(impl, 3, 0, FALSE);
     *(DWORD *)(impl->base.device_state + DIJOFS_POV(0)) = 0xffffffff;
     return DI_OK;
 }
@@ -334,11 +350,11 @@ HRESULT nx_joystick_enum_device(DWORD type, DWORD flags, DIDEVICEINSTANCEW *inst
     instance->guidProduct = nx_joystick_guid;
     instance->guidFFDriver = GUID_NULL;
     if (version >= 0x0800)
-        instance->dwDevType = DI8DEVTYPE_GAMEPAD | (DI8DEVTYPEGAMEPAD_STANDARD << 8);
+        instance->dwDevType = DI8DEVTYPE_JOYSTICK | (DI8DEVTYPEJOYSTICK_STANDARD << 8) | DIDEVTYPE_HID;
     else
-        instance->dwDevType = DIDEVTYPE_JOYSTICK | (DIDEVTYPEJOYSTICK_GAMEPAD << 8);
+        instance->dwDevType = DIDEVTYPE_JOYSTICK | (DIDEVTYPEJOYSTICK_TRADITIONAL << 8) | DIDEVTYPE_HID;
     instance->wUsagePage = 0x01;
-    instance->wUsage = 0x05;
+    instance->wUsage = 0x04; /* HID generic joystick */
     lstrcpynW(instance->tszInstanceName, L"Autorun Controller", MAX_PATH);
     lstrcpynW(instance->tszProductName, L"Autorun Xbox 360 Controller (DirectInput)", MAX_PATH);
     return DI_OK;
@@ -376,10 +392,10 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
         impl->base.object_properties[i].granularity = 1;
     }
 
-    *(LONG *)(impl->base.device_state + DIJOFS_X) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_Y) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_RX) = 32768;
-    *(LONG *)(impl->base.device_state + DIJOFS_RY) = 32768;
+    *(LONG *)(impl->base.device_state + DIJOFS_X) = nx_axis_to_dinput(impl, 0, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_Y) = nx_axis_to_dinput(impl, 1, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_RX) = nx_axis_to_dinput(impl, 2, 0, FALSE);
+    *(LONG *)(impl->base.device_state + DIJOFS_RY) = nx_axis_to_dinput(impl, 3, 0, FALSE);
     *(DWORD *)(impl->base.device_state + DIJOFS_POV(0)) = 0xffffffff;
 
     *out = &impl->base.IDirectInputDevice8W_iface;
