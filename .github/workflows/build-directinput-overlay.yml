@@ -1,4 +1,5 @@
 name: Build DirectInput test overlay
+# Test branch build for the native DirectInput bridge.
 
 on:
   workflow_dispatch:
