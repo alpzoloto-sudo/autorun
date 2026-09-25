@@ -86,6 +86,51 @@ static void nx_claim_controller(void)
     InitOnceExecuteOnce(&nx_claim_once, nx_start_claim_once, NULL, NULL);
 }
 
+/* NFSU2: load the Widescreen Fix without a game-local dinput8.dll.
+ *
+ * On Windows the release normally uses Ultimate ASI Loader as dinput8.dll.
+ * Autorun already needs its own dinput8.dll for the native DirectInput bridge,
+ * so replacing it would undo controller support. Load the ASI directly instead,
+ * after the loader lock is out of the way.
+ */
+static BOOL nx_is_nfsu2(void);
+static INIT_ONCE nx_nfsu2_ws_once = INIT_ONCE_STATIC_INIT;
+
+static DWORD WINAPI nx_nfsu2_ws_thread(void *arg)
+{
+    WCHAR exe[MAX_PATH], path[MAX_PATH], *slash;
+
+    if (!GetModuleFileNameW(NULL, exe, ARRAY_SIZE(exe))) return 0;
+    slash = wcsrchr(exe, L'\\');
+    if (!slash) return 0;
+    *slash = 0;
+
+    if (swprintf(path, ARRAY_SIZE(path), L"%s\\scripts\\NFSUnderground2.WidescreenFix.asi", exe) <= 0)
+        return 0;
+
+    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+    {
+        HMODULE mod = LoadLibraryW(path);
+        TRACE("NFSU2 Widescreen Fix direct load: %s (%p)\n", debugstr_w(path), mod);
+    }
+    return 0;
+}
+
+static BOOL WINAPI nx_start_nfsu2_ws_once(INIT_ONCE *once, void *param, void **context)
+{
+    HANDLE thread;
+
+    if (!nx_is_nfsu2()) return TRUE;
+    thread = CreateThread(NULL, 0, nx_nfsu2_ws_thread, NULL, 0, NULL);
+    if (thread) CloseHandle(thread);
+    return TRUE;
+}
+
+static void nx_load_nfsu2_widescreen_fix(void)
+{
+    InitOnceExecuteOnce(&nx_nfsu2_ws_once, nx_start_nfsu2_ws_once, NULL, NULL);
+}
+
 static inline struct nx_joystick *impl_from_IDirectInputDevice8W(IDirectInputDevice8W *iface)
 {
     return CONTAINING_RECORD(CONTAINING_RECORD(iface, struct dinput_device, IDirectInputDevice8W_iface),
@@ -139,97 +184,6 @@ static BOOL nx_is_nfsu2(void)
     name = name ? name + 1 : path;
     if (!wcsicmp(name, L"speed2.exe")) cached = 1;
     return cached;
-}
-
-/*
- * NFSU2 is known to have a race in its own game-created worker threads on
- * multicore CPUs.  The Widescreen Fix solved this by pinning the threads
- * created through speed2.exe's CreateThread import to one CPU while leaving
- * graphics/driver threads free on the other CPUs.
- *
- * Do the same here without loading any ASI code.  Creating the thread
- * suspended first closes the small race between CreateThread returning and
- * setting its affinity.
- */
-static INIT_ONCE nx_nfsu2_affinity_once = INIT_ONCE_STATIC_INIT;
-
-static HANDLE WINAPI nx_nfsu2_create_thread(LPSECURITY_ATTRIBUTES attrs, SIZE_T stack_size,
-                                             LPTHREAD_START_ROUTINE start, LPVOID param,
-                                             DWORD flags, LPDWORD thread_id)
-{
-    HANDLE thread = CreateThread(attrs, stack_size, start, param, flags | CREATE_SUSPENDED, thread_id);
-
-    if (thread)
-    {
-        SetThreadAffinityMask(thread, 1);
-        if (!(flags & CREATE_SUSPENDED)) ResumeThread(thread);
-    }
-    return thread;
-}
-
-static BOOL WINAPI nx_nfsu2_affinity_once_cb(INIT_ONCE *once, void *param, void **context)
-{
-    BYTE *base;
-    IMAGE_DOS_HEADER *dos;
-    IMAGE_NT_HEADERS *nt;
-    IMAGE_IMPORT_DESCRIPTOR *imports;
-
-    if (!nx_is_nfsu2()) return TRUE;
-
-    /* Keep the main game thread on the same CPU as game-created workers. */
-    SetThreadAffinityMask(GetCurrentThread(), 1);
-
-    base = (BYTE *)GetModuleHandleW(NULL);
-    if (!base) return TRUE;
-    dos = (IMAGE_DOS_HEADER *)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return TRUE;
-    nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return TRUE;
-
-    imports = (IMAGE_IMPORT_DESCRIPTOR *)(base +
-        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    if (!imports) return TRUE;
-
-    for (; imports->Name; ++imports)
-    {
-        IMAGE_THUNK_DATA *names, *iat;
-        SIZE_T i;
-
-        if (lstrcmpiA((const char *)(base + imports->Name), "KERNEL32.DLL")) continue;
-        if (!imports->OriginalFirstThunk) break;
-
-        names = (IMAGE_THUNK_DATA *)(base + imports->OriginalFirstThunk);
-        iat = (IMAGE_THUNK_DATA *)(base + imports->FirstThunk);
-
-        for (i = 0; names[i].u1.AddressOfData; ++i)
-        {
-            IMAGE_IMPORT_BY_NAME *import_name;
-            DWORD old_protect;
-
-            if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) continue;
-            import_name = (IMAGE_IMPORT_BY_NAME *)(base + names[i].u1.AddressOfData);
-            if (strcmp((const char *)import_name->Name, "CreateThread")) continue;
-
-            if (VirtualProtect(&iat[i].u1.Function, sizeof(iat[i].u1.Function),
-                               PAGE_EXECUTE_READWRITE, &old_protect))
-            {
-                iat[i].u1.Function = (ULONG_PTR)nx_nfsu2_create_thread;
-                VirtualProtect(&iat[i].u1.Function, sizeof(iat[i].u1.Function),
-                               old_protect, &old_protect);
-                FlushInstructionCache(GetCurrentProcess(), &iat[i].u1.Function,
-                                      sizeof(iat[i].u1.Function));
-                TRACE("NFSU2 game-thread affinity stabilization enabled\n");
-            }
-            return TRUE;
-        }
-        break;
-    }
-    return TRUE;
-}
-
-static void nx_nfsu2_enable_thread_affinity(void)
-{
-    InitOnceExecuteOnce(&nx_nfsu2_affinity_once, nx_nfsu2_affinity_once_cb, NULL, NULL);
 }
 
 static BOOL nx_game_ptr_ok(const void *ptr, SIZE_T size, BOOL write)
@@ -552,7 +506,6 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
     nx_claim_controller();
     nx_nfsu2_mark_controller();
-    nx_nfsu2_enable_thread_affinity();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
