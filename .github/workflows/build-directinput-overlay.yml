@@ -8,6 +8,9 @@ on:
       - nfsu2-directinput
     paths:
       - 'dlls/dinput/**'
+      - 'wine-nx-probe/source/compositor.c'
+      - 'wine-nx-probe/source/compositor_gl.c'
+      - 'wine-nx-probe/source/compositor_gl.h'
       - '.github/workflows/build-directinput-overlay.yml'
 
 jobs:
@@ -54,9 +57,27 @@ jobs:
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll
 
+      - name: Build Switch runtime NRO
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" \
+            --workdir /project/wine-nx-probe \
+            devkitpro/devkita64 \
+            sh -lc '
+              dkp-pacman -Sy --noconfirm --needed switch-freetype switch-harfbuzz switch-bzip2 switch-libpng
+              cmake -S . -B build-switch-ci \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/switch-devkitA64.cmake \
+                -DCMAKE_BUILD_TYPE=Release
+              cmake --build build-switch-ci -j"$(nproc)" --target wine-nx-runtime
+            '
+          file wine-nx-probe/build-switch-ci/wine-nx-runtime.nro
+
+
       - name: Make SD overlay
         run: |
           mkdir -p overlay/switch/wine/drive_c/windows/syswow64
+          cp wine-nx-probe/build-switch-ci/wine-nx-runtime.nro \
+             overlay/switch/wine/wine-nx-runtime.nro
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll \
              overlay/switch/wine/drive_c/windows/syswow64/dinput.dll
           cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll \
@@ -91,6 +112,11 @@ jobs:
           This test build exposes Autorun's existing Switch/XInput controller
           as a legacy DirectInput gamepad and adds an NFSU2 graphics profile:
           DXVK, 30 FPS cap, VSync and FSR upscaling.
+
+          It also replaces wine-nx-runtime.nro with a compositor build that
+          stretches a finished 800x600 surface to the Switch 1280x720 screen.
+          NFSU2 itself stays in its stable 800x600 mode; only presentation is
+          scaled, so no game code or resolution table is patched.
 
           The external Widescreen Fix ASI is intentionally NOT included because
           it black-screens under Wine-NX. Instead this build uses DXVK's native
