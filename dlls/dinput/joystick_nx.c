@@ -73,9 +73,26 @@ static BOOL nx_get_xinput_state(XINPUT_STATE *state)
 
 static LONG nx_axis(SHORT value, BOOL invert)
 {
+    /* Switch sticks rarely sit on an exact zero. Old DirectInput games such as
+     * NFSU2 often apply little or no deadzone, so a small hardware offset can
+     * look like a permanently held direction in both menus and gameplay.
+     *
+     * Apply a modest radial-per-axis deadzone and rescale the remaining travel
+     * back to the full DirectInput range. */
+    const LONG deadzone = 4096;
     LONG v = value;
 
     if (invert) v = -v;
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
+
+    if (v > -deadzone && v < deadzone) return 32768;
+
+    if (v > 0)
+        v = (v - deadzone) * 32767 / (32767 - deadzone);
+    else
+        v = (v + deadzone) * 32768 / (32768 - deadzone);
+
     if (v > 32767) v = 32767;
     if (v < -32768) v = -32768;
     return v + 32768;
