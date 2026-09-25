@@ -75,6 +75,11 @@ jobs:
           own-controls=0
           EOF
 
+          cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
+          # Safe widescreen experiment: only expose 16:9 D3D9 modes to the game.
+          # This avoids ASI injection, which black-screens under Wine-NX.
+          d3d9.forceAspectRatio = 16:9
+          EOF
 
 
           cat > overlay/README.txt <<'EOF'
@@ -88,7 +93,8 @@ jobs:
           DXVK, 30 FPS cap, VSync and FSR upscaling.
 
           The external Widescreen Fix ASI is intentionally NOT included because
-          it black-screens under Wine-NX. Instead this build patches NFSU2's native 800x600 resolution slot to 1280x720 directly in memory, avoiding ASI injection entirely.
+          it black-screens under Wine-NX. Instead this build uses DXVK's native
+          d3d9.forceAspectRatio = 16:9 mode filter so NFSU2 only sees 16:9 modes.
 
           The DirectInput profile, DXVK, 30 FPS cap, VSync and FSR remain enabled.
 
