@@ -66,20 +66,20 @@ jobs:
 
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          # Diagnostic step 4: bundled DXVK with D3D9 dialog mode.
-          d3d=dxvk
+          # Stable fallback: WineD3D path (race loading is known to complete)
+          # with compositor scaling enabled for correct placement and lighter output.
+          windows=compositor
+          frame-limit=30
           vsync=0
+          upscaling=fsr
+          upscaling-sharpness=40%
           address-space=32-bit
           own-controls=0
           EOF
 
-          # Overwrite any stale per-game DXVK experiment left on the SD card.
-          # Frame cap/VSync still come from speed2.wine-nx.txt via Autorun.
+          # Neutralize stale DXVK experiments left beside the game.
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
-          # NFSU2 repeatedly resets/recreates its D3D9 presentation path while
-          # entering garages/races. Keep DXVK out of exclusive fullscreen for
-          # this diagnostic run so that transition does not depend on device loss.
-          d3d9.enableDialogMode = True
+          # Intentionally empty for the WineD3D fallback.
           EOF
 
 
@@ -90,14 +90,14 @@ jobs:
           Copy the contents of this archive to the root of the Switch SD card
           and allow dinput.dll to be replaced.
 
-          This test build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad and tests NFSU2 against bundled DXVK.
+          This build exposes Autorun's existing Switch/XInput controller
+          as a legacy DirectInput gamepad and uses the WineD3D fallback path.
 
           The external Widescreen Fix ASI and compositor runtime are intentionally
           NOT included. This overlay keeps the last known-good Wine-NX runtime.
 
-          The DirectInput bridge remains unchanged. This build intentionally
-          has no frame cap, VSync or FSR; only D3D9 dialog mode is enabled.
+          The DirectInput bridge is the hardware-proven version. WineD3D is
+          paired with the compositor, 30 FPS cap and FSR scaling.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
