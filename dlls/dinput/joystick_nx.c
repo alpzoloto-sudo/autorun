@@ -147,14 +147,10 @@ static HRESULT nx_joystick_enum_objects(IDirectInputDevice8W *iface, const DIPRO
          DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(0), DIDOI_ASPECTPOSITION, L"X Axis"},
         {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_YAxis, DIJOFS_Y,
          DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(1), DIDOI_ASPECTPOSITION, L"Y Axis"},
-        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_ZAxis, DIJOFS_Z,
-         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(2), DIDOI_ASPECTPOSITION, L"Left Trigger"},
         {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RxAxis, DIJOFS_RX,
-         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(3), DIDOI_ASPECTPOSITION, L"Right X Axis"},
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(2), DIDOI_ASPECTPOSITION, L"Right X Axis"},
         {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RyAxis, DIJOFS_RY,
-         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(4), DIDOI_ASPECTPOSITION, L"Right Y Axis"},
-        {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_RzAxis, DIJOFS_RZ,
-         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(5), DIDOI_ASPECTPOSITION, L"Right Trigger"},
+         DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE(3), DIDOI_ASPECTPOSITION, L"Right Y Axis"},
         {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_POV, DIJOFS_POV(0),
          DIDFT_POV | DIDFT_MAKEINSTANCE(0), 0, L"D-pad"},
         {sizeof(DIDEVICEOBJECTINSTANCEW), GUID_Button, DIJOFS_BUTTON(0),
@@ -225,24 +221,22 @@ static HRESULT nx_joystick_poll(IDirectInputDevice8W *iface)
 
     nx_update_long(impl, DIJOFS_X, 0, nx_axis(state.Gamepad.sThumbLX, FALSE));
     nx_update_long(impl, DIJOFS_Y, 1, nx_axis(state.Gamepad.sThumbLY, TRUE));
-    nx_update_long(impl, DIJOFS_Z, 2, (LONG)state.Gamepad.bLeftTrigger * 257);
-    nx_update_long(impl, DIJOFS_RX, 3, nx_axis(state.Gamepad.sThumbRX, FALSE));
-    nx_update_long(impl, DIJOFS_RY, 4, nx_axis(state.Gamepad.sThumbRY, TRUE));
-    nx_update_long(impl, DIJOFS_RZ, 5, (LONG)state.Gamepad.bRightTrigger * 257);
-    nx_update_long(impl, DIJOFS_POV(0), 6, nx_pov(b));
+    nx_update_long(impl, DIJOFS_RX, 2, nx_axis(state.Gamepad.sThumbRX, FALSE));
+    nx_update_long(impl, DIJOFS_RY, 3, nx_axis(state.Gamepad.sThumbRY, TRUE));
+    nx_update_long(impl, DIJOFS_POV(0), 4, nx_pov(b));
 
-    nx_update_button(impl, DIJOFS_BUTTON(0), 7, b & XINPUT_GAMEPAD_A);
-    nx_update_button(impl, DIJOFS_BUTTON(1), 8, b & XINPUT_GAMEPAD_B);
-    nx_update_button(impl, DIJOFS_BUTTON(2), 9, b & XINPUT_GAMEPAD_X);
-    nx_update_button(impl, DIJOFS_BUTTON(3), 10, b & XINPUT_GAMEPAD_Y);
-    nx_update_button(impl, DIJOFS_BUTTON(4), 11, b & XINPUT_GAMEPAD_LEFT_SHOULDER);
-    nx_update_button(impl, DIJOFS_BUTTON(5), 12, b & XINPUT_GAMEPAD_RIGHT_SHOULDER);
-    nx_update_button(impl, DIJOFS_BUTTON(6), 13, b & XINPUT_GAMEPAD_BACK);
-    nx_update_button(impl, DIJOFS_BUTTON(7), 14, b & XINPUT_GAMEPAD_START);
-    nx_update_button(impl, DIJOFS_BUTTON(8), 15, b & XINPUT_GAMEPAD_LEFT_THUMB);
-    nx_update_button(impl, DIJOFS_BUTTON(9), 16, b & XINPUT_GAMEPAD_RIGHT_THUMB);
-    nx_update_button(impl, DIJOFS_BUTTON(10), 17, state.Gamepad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
-    nx_update_button(impl, DIJOFS_BUTTON(11), 18, state.Gamepad.bRightTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+    nx_update_button(impl, DIJOFS_BUTTON(0), 5, b & XINPUT_GAMEPAD_A);
+    nx_update_button(impl, DIJOFS_BUTTON(1), 6, b & XINPUT_GAMEPAD_B);
+    nx_update_button(impl, DIJOFS_BUTTON(2), 7, b & XINPUT_GAMEPAD_X);
+    nx_update_button(impl, DIJOFS_BUTTON(3), 8, b & XINPUT_GAMEPAD_Y);
+    nx_update_button(impl, DIJOFS_BUTTON(4), 9, b & XINPUT_GAMEPAD_LEFT_SHOULDER);
+    nx_update_button(impl, DIJOFS_BUTTON(5), 10, b & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+    nx_update_button(impl, DIJOFS_BUTTON(6), 11, b & XINPUT_GAMEPAD_BACK);
+    nx_update_button(impl, DIJOFS_BUTTON(7), 12, b & XINPUT_GAMEPAD_START);
+    nx_update_button(impl, DIJOFS_BUTTON(8), 13, b & XINPUT_GAMEPAD_LEFT_THUMB);
+    nx_update_button(impl, DIJOFS_BUTTON(9), 14, b & XINPUT_GAMEPAD_RIGHT_THUMB);
+    nx_update_button(impl, DIJOFS_BUTTON(10), 15, state.Gamepad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+    nx_update_button(impl, DIJOFS_BUTTON(11), 16, state.Gamepad.bRightTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
 
     if (impl->base.hEvent) SetEvent(impl->base.hEvent);
     LeaveCriticalSection(&impl->base.crit);
@@ -333,7 +327,7 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
 
     if (FAILED(hr = dinput_device_init_device_format(&impl->base.IDirectInputDevice8W_iface))) goto failed;
 
-    for (i = 0; i < 6 && i < impl->base.device_format.dwNumObjs; ++i)
+    for (i = 0; i < 4 && i < impl->base.device_format.dwNumObjs; ++i)
     {
         impl->base.object_properties[i].range_min = 0;
         impl->base.object_properties[i].range_max = 65535;
