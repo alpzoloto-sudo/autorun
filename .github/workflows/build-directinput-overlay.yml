@@ -75,6 +75,12 @@ jobs:
           own-controls=0
           EOF
 
+          # Overwrite any stale per-game DXVK experiment left on the SD card.
+          # Frame cap/VSync still come from speed2.wine-nx.txt via Autorun.
+          cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
+          # NFSU2 clean baseline: intentionally no aspect-ratio override.
+          EOF
+
 
 
           cat > overlay/README.txt <<'EOF'
