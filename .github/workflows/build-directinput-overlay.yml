@@ -66,11 +66,9 @@ jobs:
 
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          d3d=dxvk
-          frame-limit=30
-          vsync=1
-          upscaling=fsr
-          upscaling-sharpness=40%
+          # Diagnostic baseline: controller bridge only.
+          # Leave Direct3D on Wine's default path; no DXVK frame limiter or FSR.
+          vsync=0
           address-space=32-bit
           own-controls=0
           EOF
