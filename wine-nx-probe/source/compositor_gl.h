@@ -83,7 +83,7 @@ struct compositor_gl_quad
 {
     const struct compositor_gl_texture *texture;
     int x, y, width, height;
-    int src_x, src_y;
+    int src_x, src_y, src_width, src_height;
 };
 
 struct compositor_gl
