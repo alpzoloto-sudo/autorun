@@ -54,16 +54,6 @@ jobs:
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput8/i386-windows/dinput8.dll
           file wine-nx-probe/build-wine-wow64-pe-ci/dlls/d3dx9_43/i386-windows/d3dx9_43.dll
 
-      - name: Fetch NFSU2 Widescreen Fix
-        run: |
-          curl -L --fail --retry 3 \
-            -o /tmp/nfsu2-widescreen.zip \
-            https://github.com/ThirteenAG/WidescreenFixesPack/releases/download/nfsu2/NFSUnderground2.WidescreenFix.zip
-          rm -rf /tmp/nfsu2-widescreen
-          mkdir -p /tmp/nfsu2-widescreen
-          unzip -q /tmp/nfsu2-widescreen.zip -d /tmp/nfsu2-widescreen
-          find /tmp/nfsu2-widescreen -maxdepth 4 -type f -print
-
       - name: Make SD overlay
         run: |
           mkdir -p overlay/switch/wine/drive_c/windows/syswow64
@@ -85,56 +75,12 @@ jobs:
           own-controls=0
           EOF
 
-          # Keep Autorun's dinput8.dll. The branch now loads the ASI directly,
-          # so only the Widescreen Fix's scripts are staged from the upstream
-          # release; its Ultimate ASI Loader dinput8.dll is intentionally omitted.
-          mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts"
-          WS_ASI="$(find /tmp/nfsu2-widescreen -type f -iname 'NFSUnderground2.WidescreenFix.asi' | head -n1)"
-          WS_DAT="$(find /tmp/nfsu2-widescreen -type f -iname 'NFSUnderground2.WidescreenFix.dat' | head -n1)"
-          WS_INI="$(find /tmp/nfsu2-widescreen -type f -iname 'NFSUnderground2.WidescreenFix.ini' | head -n1)"
-          test -n "$WS_ASI" && test -n "$WS_DAT" && test -n "$WS_INI"
-          cp "$WS_ASI" "overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts/"
-          cp "$WS_DAT" "overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts/"
-          cp "$WS_INI" "overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts/"
+          cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
+          # Safe widescreen experiment: only expose 16:9 D3D9 modes to the game.
+          # This avoids ASI injection, which black-screens under Wine-NX.
+          d3d9.forceAspectRatio = 16:9
+          EOF
 
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts/NFSUnderground2.WidescreenFix.ini")
-          s = p.read_text(errors="ignore")
-          replacements = {
-              "FixHUD": "1",
-              "FixFOV": "1",
-              "Scaling": "0",
-              "FMVWidescreenMode": "1",
-              "AutoFitFE": "0",
-              "AutoFitFMV": "1",
-              "SkipIntro": "1",
-              "WindowedMode": "0",
-              "DisableCutsceneBorders": "1",
-              "ImproveGamepadSupport": "0",
-              "FPSLimit": "-1",
-              "SingleCoreAffinity": "1",
-              "NoOpticalDriveFix": "1",
-          }
-          lines = s.splitlines()
-          out = []
-          seen = set()
-          for line in lines:
-              stripped = line.strip()
-              if "=" in stripped and not stripped.startswith((";", "#")):
-                  key = stripped.split("=", 1)[0].strip()
-                  if key in replacements:
-                      prefix = line[:len(line) - len(line.lstrip())]
-                      out.append(f"{prefix}{key} = {replacements[key]}")
-                      seen.add(key)
-                      continue
-              out.append(line)
-          p.write_text("\n".join(out) + "\n")
-          PY
-
-          curl -L --fail --retry 3 \
-            -o "overlay/switch/wine/drive_c/Need for Speed Underground 2/scripts/WidescreenFix-LICENSE.txt" \
-            https://raw.githubusercontent.com/ThirteenAG/WidescreenFixesPack/master/license
 
           cat > overlay/README.txt <<'EOF'
           Autorun DirectInput test overlay for nfsu2-directinput.
@@ -146,13 +92,11 @@ jobs:
           as a legacy DirectInput gamepad and adds an NFSU2 graphics profile:
           DXVK, 30 FPS cap, VSync and FSR upscaling.
 
-          d3dx9_43.dll and the upstream MIT-licensed NFSU2 Widescreen Fix
-          scripts are included. Do NOT copy the Widescreen Fix release's
-          dinput8.dll into the game folder: Autorun now loads the ASI directly
-          while keeping its own dinput8.dll for native controller support.
+          The external Widescreen Fix ASI is intentionally NOT included because
+          it black-screens under Wine-NX. Instead this build uses DXVK's native
+          d3d9.forceAspectRatio = 16:9 mode filter so NFSU2 only sees 16:9 modes.
 
-          In NFSU2 Video settings select 1280x720 after the fix loads. The
-          DirectInput profile, DXVK, 30 FPS cap, VSync and FSR remain enabled.
+          The DirectInput profile, DXVK, 30 FPS cap, VSync and FSR remain enabled.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
