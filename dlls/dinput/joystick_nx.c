@@ -86,51 +86,6 @@ static void nx_claim_controller(void)
     InitOnceExecuteOnce(&nx_claim_once, nx_start_claim_once, NULL, NULL);
 }
 
-/* NFSU2: load the Widescreen Fix without a game-local dinput8.dll.
- *
- * On Windows the release normally uses Ultimate ASI Loader as dinput8.dll.
- * Autorun already needs its own dinput8.dll for the native DirectInput bridge,
- * so replacing it would undo controller support. Load the ASI directly instead,
- * after the loader lock is out of the way.
- */
-static BOOL nx_is_nfsu2(void);
-static INIT_ONCE nx_nfsu2_ws_once = INIT_ONCE_STATIC_INIT;
-
-static DWORD WINAPI nx_nfsu2_ws_thread(void *arg)
-{
-    WCHAR exe[MAX_PATH], path[MAX_PATH], *slash;
-
-    if (!GetModuleFileNameW(NULL, exe, ARRAY_SIZE(exe))) return 0;
-    slash = wcsrchr(exe, L'\\');
-    if (!slash) return 0;
-    *slash = 0;
-
-    if (swprintf(path, ARRAY_SIZE(path), L"%s\\scripts\\NFSUnderground2.WidescreenFix.asi", exe) <= 0)
-        return 0;
-
-    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
-    {
-        HMODULE mod = LoadLibraryW(path);
-        TRACE("NFSU2 Widescreen Fix direct load: %s (%p)\n", debugstr_w(path), mod);
-    }
-    return 0;
-}
-
-static BOOL WINAPI nx_start_nfsu2_ws_once(INIT_ONCE *once, void *param, void **context)
-{
-    HANDLE thread;
-
-    if (!nx_is_nfsu2()) return TRUE;
-    thread = CreateThread(NULL, 0, nx_nfsu2_ws_thread, NULL, 0, NULL);
-    if (thread) CloseHandle(thread);
-    return TRUE;
-}
-
-static void nx_load_nfsu2_widescreen_fix(void)
-{
-    InitOnceExecuteOnce(&nx_nfsu2_ws_once, nx_start_nfsu2_ws_once, NULL, NULL);
-}
-
 static inline struct nx_joystick *impl_from_IDirectInputDevice8W(IDirectInputDevice8W *iface)
 {
     return CONTAINING_RECORD(CONTAINING_RECORD(iface, struct dinput_device, IDirectInputDevice8W_iface),
