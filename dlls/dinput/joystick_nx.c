@@ -45,6 +45,47 @@ static HMODULE xinput_module;
 static xinput_get_state_func pXInputGetState;
 static BOOL xinput_tried;
 
+/*
+ * Autorun's native input layer also maps the Switch pad to keyboard/mouse.
+ * It suppresses that mapping while XInput is being polled. Legacy DirectInput
+ * games may create our joystick once and then poll it irregularly (or only
+ * while a specific controls page is active), which lets the keyboard mapping
+ * wake back up and overlap the DirectInput device.
+ *
+ * Keep XInput "recent" for the lifetime of a process once it has created the
+ * synthetic DirectInput controller. This makes the DirectInput bridge claim
+ * the pad in the same way a native XInput game does.
+ */
+static BOOL nx_load_xinput(void);
+static INIT_ONCE nx_claim_once = INIT_ONCE_STATIC_INIT;
+
+static DWORD WINAPI nx_claim_thread(void *arg)
+{
+    XINPUT_STATE state;
+
+    for (;;)
+    {
+        if (pXInputGetState) pXInputGetState(0, &state);
+        Sleep(250);
+    }
+    return 0;
+}
+
+static BOOL WINAPI nx_start_claim_once(INIT_ONCE *once, void *param, void **context)
+{
+    HANDLE thread;
+
+    if (!nx_load_xinput()) return TRUE;
+    thread = CreateThread(NULL, 0, nx_claim_thread, NULL, 0, NULL);
+    if (thread) CloseHandle(thread);
+    return TRUE;
+}
+
+static void nx_claim_controller(void)
+{
+    InitOnceExecuteOnce(&nx_claim_once, nx_start_claim_once, NULL, NULL);
+}
+
 static inline struct nx_joystick *impl_from_IDirectInputDevice8W(IDirectInputDevice8W *iface)
 {
     return CONTAINING_RECORD(CONTAINING_RECORD(iface, struct dinput_device, IDirectInputDevice8W_iface),
@@ -314,6 +355,7 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
     if (!IsEqualGUID(guid, &nx_joystick_guid) && !IsEqualGUID(guid, &GUID_Joystick))
         return DIERR_DEVICENOTREG;
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
+    nx_claim_controller();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
