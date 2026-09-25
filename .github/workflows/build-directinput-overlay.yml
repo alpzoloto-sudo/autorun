@@ -67,7 +67,8 @@ jobs:
               dkp-pacman -Sy --noconfirm --needed switch-freetype switch-harfbuzz switch-bzip2 switch-libpng
               cmake -S . -B build-switch-ci \
                 -DCMAKE_TOOLCHAIN_FILE=cmake/switch-devkitA64.cmake \
-                -DCMAKE_BUILD_TYPE=Release
+                -DCMAKE_BUILD_TYPE=Release \
+                -DWINE_NX_PE_BUILD_DIR=/project/wine-nx-probe/build-wine-wow64-pe-ci
               cmake --build build-switch-ci -j"$(nproc)" --target wine-nx-runtime
             '
           file wine-nx-probe/build-switch-ci/wine-nx-runtime.nro
