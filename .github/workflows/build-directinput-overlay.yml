@@ -1,0 +1,78 @@
+name: Build DirectInput test overlay
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - nfsu2-directinput
+    paths:
+      - 'dlls/dinput/**'
+      - '.github/workflows/build-directinput-overlay.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison flex python3 perl pkg-config curl xz-utils zip
+
+      - name: Install LLVM-MinGW 20260505
+        run: |
+          curl -L --fail --retry 3 \
+            -o /tmp/llvm-mingw.tar.xz \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20260505/llvm-mingw-20260505-ucrt-ubuntu-22.04-x86_64.tar.xz
+          sudo mkdir -p /opt/llvm-mingw
+          sudo tar -xJf /tmp/llvm-mingw.tar.xz --strip-components=1 -C /opt/llvm-mingw
+          /opt/llvm-mingw/bin/i686-w64-mingw32-clang --version
+          /opt/llvm-mingw/bin/aarch64-w64-mingw32-clang --version
+
+      - name: Configure Wine PE build
+        run: |
+          mkdir -p wine-nx-probe/build-wine-wow64-pe-ci
+          cd wine-nx-probe/build-wine-wow64-pe-ci
+          PATH="/opt/llvm-mingw/bin:$PATH" ../../configure \
+            --enable-archs=aarch64,i386 \
+            --enable-winebox64=aarch64
+
+      - name: Build DirectInput module
+        run: |
+          PATH="/opt/llvm-mingw/bin:$PATH" \
+            make -C wine-nx-probe/build-wine-wow64-pe-ci -j2 \
+            include/all \
+            dlls/dinput/i386-windows/dinput.dll
+          file wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll
+
+      - name: Make SD overlay
+        run: |
+          mkdir -p overlay/switch/wine/drive_c/windows/syswow64
+          cp wine-nx-probe/build-wine-wow64-pe-ci/dlls/dinput/i386-windows/dinput.dll \
+             overlay/switch/wine/drive_c/windows/syswow64/dinput.dll
+          cat > overlay/README.txt <<'EOF'
+          Autorun DirectInput test overlay for nfsu2-directinput.
+
+          Copy the contents of this archive to the root of the Switch SD card
+          and allow dinput.dll to be replaced.
+
+          This test build exposes Autorun's existing Switch/XInput controller
+          as a legacy DirectInput gamepad. It is intended to test NFS Underground 2
+          without NFSU-XtendedInput/ASI injection.
+
+          Keep a backup of the original:
+            switch/wine/drive_c/windows/syswow64/dinput.dll
+          EOF
+          cd overlay
+          zip -r ../autorun-directinput-nfsu2-test.zip .
+
+      - name: Upload test overlay
+        uses: actions/upload-artifact@v4
+        with:
+          name: autorun-directinput-nfsu2-test
+          path: autorun-directinput-nfsu2-test.zip
+          if-no-files-found: error
