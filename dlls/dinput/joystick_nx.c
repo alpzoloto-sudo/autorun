@@ -93,7 +93,8 @@ static void nx_claim_controller(void)
  * so replacing it would undo controller support. Load the ASI directly instead,
  * after the loader lock is out of the way.
  */
-static BOOL nx_is_nfsu2(void);\nstatic INIT_ONCE nx_nfsu2_ws_once = INIT_ONCE_STATIC_INIT;
+static BOOL nx_is_nfsu2(void);
+static INIT_ONCE nx_nfsu2_ws_once = INIT_ONCE_STATIC_INIT;
 
 static DWORD WINAPI nx_nfsu2_ws_thread(void *arg)
 {
