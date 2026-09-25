@@ -141,88 +141,6 @@ static BOOL nx_is_nfsu2(void)
     return cached;
 }
 
-/*
- * NFSU2 has a long-standing race in threads created by the game itself.
- * Match the Widescreen Fix implementation exactly: patch speed2.exe's
- * imported CreateThread so game-created threads are pinned to CPU 0, while
- * graphics/driver threads remain free. Do not force CREATE_SUSPENDED here;
- * the earlier experiment did that and broke race transitions on Switch.
- */
-static INIT_ONCE nx_nfsu2_affinity_once = INIT_ONCE_STATIC_INIT;
-
-static HANDLE WINAPI nx_nfsu2_create_thread(LPSECURITY_ATTRIBUTES attrs, SIZE_T stack_size,
-                                             LPTHREAD_START_ROUTINE start, LPVOID param,
-                                             DWORD flags, LPDWORD thread_id)
-{
-    HANDLE thread = CreateThread(attrs, stack_size, start, param, flags, thread_id);
-
-    if (thread) SetThreadAffinityMask(thread, 1);
-    return thread;
-}
-
-static BOOL WINAPI nx_nfsu2_affinity_once_cb(INIT_ONCE *once, void *param, void **context)
-{
-    BYTE *base;
-    IMAGE_DOS_HEADER *dos;
-    IMAGE_NT_HEADERS *nt;
-    IMAGE_IMPORT_DESCRIPTOR *imports;
-
-    if (!nx_is_nfsu2()) return TRUE;
-
-    base = (BYTE *)GetModuleHandleW(NULL);
-    if (!base) return TRUE;
-    dos = (IMAGE_DOS_HEADER *)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return TRUE;
-    nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return TRUE;
-
-    imports = (IMAGE_IMPORT_DESCRIPTOR *)(base +
-        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    if (!imports) return TRUE;
-
-    for (; imports->Name; ++imports)
-    {
-        IMAGE_THUNK_DATA *names, *iat;
-        SIZE_T i;
-
-        if (lstrcmpiA((const char *)(base + imports->Name), "KERNEL32.DLL")) continue;
-        if (!imports->OriginalFirstThunk) break;
-
-        names = (IMAGE_THUNK_DATA *)(base + imports->OriginalFirstThunk);
-        iat = (IMAGE_THUNK_DATA *)(base + imports->FirstThunk);
-
-        for (i = 0; names[i].u1.AddressOfData; ++i)
-        {
-            IMAGE_IMPORT_BY_NAME *import_name;
-            DWORD old_protect, restore_protect;
-
-            if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) continue;
-            import_name = (IMAGE_IMPORT_BY_NAME *)(base + names[i].u1.AddressOfData);
-            if (strcmp((const char *)import_name->Name, "CreateThread")) continue;
-
-            if (VirtualProtect(&iat[i].u1.Function, sizeof(iat[i].u1.Function),
-                               PAGE_EXECUTE_READWRITE, &old_protect))
-            {
-                iat[i].u1.Function = (ULONG_PTR)nx_nfsu2_create_thread;
-                VirtualProtect(&iat[i].u1.Function, sizeof(iat[i].u1.Function),
-                               old_protect, &restore_protect);
-                FlushInstructionCache(GetCurrentProcess(), &iat[i].u1.Function,
-                                      sizeof(iat[i].u1.Function));
-                SetThreadAffinityMask(GetCurrentThread(), 1);
-                TRACE("NFSU2 exact WidescreenFix game-thread affinity enabled\n");
-            }
-            return TRUE;
-        }
-        break;
-    }
-    return TRUE;
-}
-
-static void nx_nfsu2_enable_thread_affinity(void)
-{
-    InitOnceExecuteOnce(&nx_nfsu2_affinity_once, nx_nfsu2_affinity_once_cb, NULL, NULL);
-}
-
 static BOOL nx_game_ptr_ok(const void *ptr, SIZE_T size, BOOL write)
 {
     MEMORY_BASIC_INFORMATION mbi;
@@ -543,7 +461,6 @@ HRESULT nx_joystick_create_device(struct dinput *dinput, const GUID *guid, IDire
     if (!nx_get_xinput_state(&state)) return DIERR_DEVICENOTREG;
     nx_claim_controller();
     nx_nfsu2_mark_controller();
-    nx_nfsu2_enable_thread_affinity();
 
     if (!(impl = calloc(1, sizeof(*impl)))) return E_OUTOFMEMORY;
     dinput_device_init(&impl->base, &nx_joystick_vtbl, &nx_joystick_guid, dinput);
