@@ -66,20 +66,18 @@ jobs:
 
           mkdir -p "overlay/switch/wine/drive_c/Need for Speed Underground 2"
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/speed2.wine-nx.txt" <<'EOF'
-          # Stable fallback: WineD3D path (race loading is known to complete)
-          # with compositor scaling enabled for correct placement and lighter output.
+          # NFSU2 early-affinity test: bundled DXVK, no extra limiter/upscaler.
+          d3d=dxvk
           windows=compositor
-          frame-limit=30
           vsync=0
-          upscaling=fsr
-          upscaling-sharpness=40%
           address-space=32-bit
           own-controls=0
           EOF
 
           # Neutralize stale DXVK experiments left beside the game.
           cat > "overlay/switch/wine/drive_c/Need for Speed Underground 2/dxvk.conf" <<'EOF'
-          # Intentionally empty for the WineD3D fallback.
+          # Keep NFSU2 out of exclusive fullscreen during garage/race transitions.
+          d3d9.enableDialogMode = True
           EOF
 
 
@@ -91,13 +89,13 @@ jobs:
           and allow dinput.dll to be replaced.
 
           This build exposes Autorun's existing Switch/XInput controller
-          as a legacy DirectInput gamepad and uses the WineD3D fallback path.
+          as a legacy DirectInput gamepad and restores bundled DXVK.
 
           The external Widescreen Fix ASI and compositor runtime are intentionally
           NOT included. This overlay keeps the last known-good Wine-NX runtime.
 
-          The DirectInput bridge is the hardware-proven version. WineD3D is
-          paired with the compositor, 30 FPS cap and FSR scaling.
+          The NFSU2 worker-thread affinity hook is installed at DirectInput
+          creation time, before the game's worker threads are started.
 
           Keep a backup of the original:
             switch/wine/drive_c/windows/syswow64/dinput.dll
