@@ -798,6 +798,8 @@ static HRESULT dinput_create( IUnknown **out )
 {
     struct dinput *impl;
 
+    nx_nfsu2_enable_thread_affinity_early();
+
     if (!(impl = calloc( 1, sizeof(struct dinput) ))) return E_OUTOFMEMORY;
     impl->IDirectInput7A_iface.lpVtbl = &dinput7_a_vtbl;
     impl->IDirectInput7W_iface.lpVtbl = &dinput7_vtbl;
